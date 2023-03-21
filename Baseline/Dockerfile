@@ -26,6 +26,6 @@ COPY --chown=algorithm:algorithm model1.pth /opt/algorithm/model1.pth
 COPY --chown=algorithm:algorithm gmm1.pth /opt/algorithm/gmm1.pth
 
 COPY --chown=algorithm:algorithm /density_unet /opt/algorithm/density_unet
-COPY --chown=algorithm:algorithm /density_unet/* /opt/algorithm/density_unet/*
+COPY --chown=algorithm:algorithm /density_unet/* /opt/algorithm/density_unet/
 
 ENTRYPOINT python -m process $0 $@
