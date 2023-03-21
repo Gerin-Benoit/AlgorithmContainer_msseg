@@ -156,13 +156,14 @@ class Baseline(SegmentationAlgorithm):
             print(confidences.shape)
             outputs = self.act(outputs)
             outputs = torch.argmax(outputs, axis=1).cpu().numpy()
-            outputs = np.squeeze(outputs[0, 1])
+            outputs = np.squeeze(outputs)
             print(outputs.shape)
 
 
         outputs = np.squeeze(outputs)
         print(outputs.shape)
         conf_map = confidences.cpu().numpy()
+        conf_map = np.squeeze(conf_map)
         outputs = remove_connected_components(outputs)
         print(outputs.shape)
         uncs = - conf_map
