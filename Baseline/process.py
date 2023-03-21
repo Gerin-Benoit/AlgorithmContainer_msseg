@@ -151,10 +151,11 @@ class Baseline(SegmentationAlgorithm):
 
             outputs, confidences = sliding_window_inference(image, self.roi_size, self.sw_batch_size, self.super_model,
                                                             mode='gaussian')
-            outputs = self.act(outputs).cpu().numpy()
+            outputs = self.act(outputs)
+            outputs = torch.argmax(outputs, axis=1).cpu().numpy()
             outputs = np.squeeze(outputs[0, 1])
 
-        outputs = torch.argmax(outputs, axis=1).cpu().numpy()
+
         outputs = np.squeeze(outputs)
         conf_map = confidences.cpu().numpy()
         outputs = remove_connected_components(outputs)
