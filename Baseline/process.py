@@ -148,19 +148,25 @@ class Baseline(SegmentationAlgorithm):
 
         with torch.no_grad():
             image = torch.unsqueeze(torch.unsqueeze(torch.from_numpy(image).to(self.device), axis=0), axis=0)
+            print(image.shape)
 
             outputs, confidences = sliding_window_inference(image, self.roi_size, self.sw_batch_size, self.super_model,
                                                             mode='gaussian')
+            print(outputs.shape)
+            print(confidences.shape)
             outputs = self.act(outputs)
             outputs = torch.argmax(outputs, axis=1).cpu().numpy()
             outputs = np.squeeze(outputs[0, 1])
+            print(outputs.shape)
 
 
         outputs = np.squeeze(outputs)
+        print(outputs.shape)
         conf_map = confidences.cpu().numpy()
         outputs = remove_connected_components(outputs)
-
+        print(outputs.shape)
         uncs = - conf_map
+        print(uncs.shape)
         out_seg = SimpleITK.GetImageFromArray(outputs)
         out_unc = SimpleITK.GetImageFromArray(uncs)
         return out_seg, out_unc
