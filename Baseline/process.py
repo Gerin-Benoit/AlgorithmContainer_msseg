@@ -1,4 +1,3 @@
-
 import SimpleITK
 import numpy as np
 import torch
@@ -7,12 +6,15 @@ from monai.networks.nets import UNet
 from monai.inferers import sliding_window_inference
 from uncertainty import ensemble_uncertainties_classification
 from pathlib import Path
-
+from density_unet.unet import *
+from density_unet.density_unet import *
 from evalutils import SegmentationAlgorithm
 from evalutils.validators import (
     UniquePathIndicesValidator,
     UniqueImagesValidator,
 )
+from monai.data import decollate_batch
+
 
 def get_default_device():
     """ Set device """
@@ -21,6 +23,7 @@ def get_default_device():
         return torch.device('cuda')
     else:
         return torch.device('cpu')
+
 
 def remove_connected_components(segmentation, l_min=9):
     """
@@ -45,7 +48,7 @@ def remove_connected_components(segmentation, l_min=9):
                  current_voxels[:, 1],
                  current_voxels[:, 2]] = 1
     return seg2
-    
+
 
 class Baseline(SegmentationAlgorithm):
     def __init__(self):
@@ -62,37 +65,41 @@ class Baseline(SegmentationAlgorithm):
         if not output_path.exists():
             output_path.mkdir()
 
-        #self._input_path = Path("/input/images/brain-mri/")
+        # self._input_path = Path("/input/images/brain-mri/")
         self._segmentation_output_path = Path("/output/images/white-matter-multiple-sclerosis-lesion-segmentation/")
         self._uncertainty_output_path = Path("/output/images/white-matter-multiple-sclerosis-lesion-uncertainty-map/")
 
-        #self._segmentation_output_path = Path("/output/segmentation/")
-        #self._uncertainty_output_path = Path("/output/uncertainty/")
+        # self._segmentation_output_path = Path("/output/segmentation/")
+        # self._uncertainty_output_path = Path("/output/uncertainty/")
 
         self.device = get_default_device()
 
-        K = 3
+        self.Ke = 1
         models = []
-        for i in range(K):
-            models.append(UNet(
-                spatial_dims=3,
-                in_channels=1,
-                out_channels=2,
-                channels=(32, 64, 128, 256, 512),
-                strides=(2, 2, 2, 2),
-                num_res_units=0).to(self.device)
-            )
+        roi_size = (96, 96, 96)
+        in_channels, out_channels = 1, 2
+        in_shape = (in_channels,) + roi_size
+        unet = PytorchUNet3D(in_shape,
+                             c=None,
+                             norm_layer=ActNormLP3D,
+                             num_classes=out_channels,
+                             n_channels=in_channels,
+                             device=self.device,
+                             cout=None).to(self.device)
+        x = torch.rand((1, 1,) + roi_size).to(self.device)
+        y = unet(x)
 
-        for i, model in enumerate(models):
-            model.load_state_dict(torch.load('./model'+str(i+1)+'.pth', map_location=self.device))
-            model.eval()
+        super_model = DensityUnet(path_gmms=['_', '_', '_', '_', './gmm1.pth'], path_density_unet='./model1.pth',
+                                  unet=unet,
+                                  combination='last', K=4).to(self.device)
+        super_model.Unet_init = True
+        super_model.eval()
 
-        self.models = models
+        self.super_model = super_model
         self.act = torch.nn.Softmax(dim=1)
         self.th = 0.35
         self.roi_size = (96, 96, 96)
         self.sw_batch_size = 4
-
 
     def process_case(self, *, idx, case):
         # Load and test the image for this case
@@ -127,12 +134,10 @@ class Baseline(SegmentationAlgorithm):
             "error_messages": [],
         }
 
-
     def predict(self, *, input_image: SimpleITK.Image) -> SimpleITK.Image:
 
         image = SimpleITK.GetArrayFromImage(input_image)
         image = np.transpose(np.array(image))
-
 
         # The image must be normalized as that is what we did with monai for training of the model
         # only normalize non-zero values (i.e. not the background)
@@ -142,32 +147,22 @@ class Baseline(SegmentationAlgorithm):
         image[non_zeros] = (image[non_zeros] - mu) / sigma
 
         with torch.no_grad():
-
             image = torch.unsqueeze(torch.unsqueeze(torch.from_numpy(image).to(self.device), axis=0), axis=0)
 
-            all_outputs = []
-            for model in self.models:
-                outputs = sliding_window_inference(image, self.roi_size, self.sw_batch_size, model, mode='gaussian')
-                outputs = self.act(outputs).cpu().numpy()
-                outputs = np.squeeze(outputs[0,1])
-                all_outputs.append(outputs)
-        all_outputs = np.asarray(all_outputs)
+            outputs, confidences = sliding_window_inference(image, self.roi_size, self.sw_batch_size, self.super_model,
+                                                            mode='gaussian')
+            outputs = self.act(outputs).cpu().numpy()
+            outputs = np.squeeze(outputs[0, 1])
 
-        seg = np.mean(all_outputs, axis=0)
-        seg[seg>self.th]=1
-        seg[seg<=self.th]=0
-        seg = np.squeeze(seg)
-        seg = remove_connected_components(seg)
+        outputs = torch.argmax(outputs, axis=1).cpu().numpy()
+        outputs = np.squeeze(outputs)
+        conf_map = confidences.cpu().numpy()
+        outputs = remove_connected_components(outputs)
 
-        uncs = ensemble_uncertainties_classification( np.concatenate( (np.expand_dims(all_outputs, axis=-1), np.expand_dims(1.-all_outputs, axis=-1)), axis=-1) )
-        unc_rmi = uncs["reverse_mutual_information"]
-
-        out_seg = SimpleITK.GetImageFromArray(seg)
-        out_unc = SimpleITK.GetImageFromArray(unc_rmi)
+        uncs = - conf_map
+        out_seg = SimpleITK.GetImageFromArray(outputs)
+        out_unc = SimpleITK.GetImageFromArray(uncs)
         return out_seg, out_unc
-
-
-
 
 
 if __name__ == "__main__":
