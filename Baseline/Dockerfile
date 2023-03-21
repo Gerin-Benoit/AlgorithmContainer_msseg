@@ -25,13 +25,13 @@ COPY --chown=algorithm:algorithm uncertainty.py /opt/algorithm/
 COPY --chown=algorithm:algorithm model1.pth /opt/algorithm/model1.pth
 COPY --chown=algorithm:algorithm gmm1.pth /opt/algorithm/gmm1.pth
 
-COPY --chown=algorithm:algorithm /density_unet /opt/algorithm/density_unet
-COPY --chown=algorithm:algorithm /density_unet/* /opt/algorithm/density_unet/
-COPY --chown=algorithm:algorithm /density_unet/density_unet.py /opt/algorithm/density_unet/density_unet.py
-COPY --chown=algorithm:algorithm /density_unet/divers.py /opt/algorithm/density_unet/divers.py
-COPY --chown=algorithm:algorithm /density_unet/nn_utils.py /opt/algorithm/density_unet/nn_utils.py
-COPY --chown=algorithm:algorithm /density_unet/spectral_norm_conv_inplace.py /opt/algorithm/density_unet/spectral_norm_conv_inplace.py
-COPY --chown=algorithm:algorithm /density_unet/spectral_norm_fc.py /opt/algorithm/density_unet/spectral_norm_fc.py
-COPY --chown=algorithm:algorithm /density_unet/unet.py /opt/algorithm/density_unet/unet.py
+COPY --chown=algorithm:algorithm /datasets /opt/algorithm/datasets
+COPY --chown=algorithm:algorithm /datasets/* /opt/algorithm/datasets/
+COPY --chown=algorithm:algorithm density_unet.py /opt/algorithm/density_unet.py
+COPY --chown=algorithm:algorithm divers.py /opt/algorithm/divers.py
+COPY --chown=algorithm:algorithm nn_utils.py /opt/algorithm/nn_utils.py
+COPY --chown=algorithm:algorithm spectral_norm_conv_inplace.py /opt/algorithm/spectral_norm_conv_inplace.py
+COPY --chown=algorithm:algorithm spectral_norm_fc.py /opt/algorithm/spectral_norm_fc.py
+COPY --chown=algorithm:algorithm unet.py /opt/algorithm/unet.py
 
 ENTRYPOINT python -m process $0 $@
