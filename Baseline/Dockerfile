@@ -27,5 +27,11 @@ COPY --chown=algorithm:algorithm gmm1.pth /opt/algorithm/gmm1.pth
 
 COPY --chown=algorithm:algorithm /density_unet /opt/algorithm/density_unet
 COPY --chown=algorithm:algorithm /density_unet/* /opt/algorithm/density_unet/
+COPY --chown=algorithm:algorithm /density_unet/density_unet.py /opt/algorithm/density_unet/density_unet.py
+COPY --chown=algorithm:algorithm /density_unet/divers.py /opt/algorithm/density_unet/divers.py
+COPY --chown=algorithm:algorithm /density_unet/nn_utils.py /opt/algorithm/density_unet/nn_utils.py
+COPY --chown=algorithm:algorithm /density_unet/spectral_norm_conv_inplace.py /opt/algorithm/density_unet/spectral_norm_conv_inplace.py
+COPY --chown=algorithm:algorithm /density_unet/spectral_norm_fc.py /opt/algorithm/density_unet/spectral_norm_fc.py
+COPY --chown=algorithm:algorithm /density_unet/unet.py /opt/algorithm/density_unet/unet.py
 
 ENTRYPOINT python -m process $0 $@
