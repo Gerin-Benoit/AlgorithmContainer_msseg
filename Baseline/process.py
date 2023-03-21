@@ -2,12 +2,11 @@ import SimpleITK
 import numpy as np
 import torch
 from scipy import ndimage
-from monai.networks.nets import UNet
 from monai.inferers import sliding_window_inference
 from uncertainty import ensemble_uncertainties_classification
 from pathlib import Path
-from density_unet.unet import *
-from density_unet.density_unet import *
+from unet import *
+from density_unet import *
 from evalutils import SegmentationAlgorithm
 from evalutils.validators import (
     UniquePathIndicesValidator,
