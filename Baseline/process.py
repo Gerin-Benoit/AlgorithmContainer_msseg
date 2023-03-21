@@ -90,6 +90,7 @@ class Baseline(SegmentationAlgorithm):
 
         super_model = DensityUnet(path_gmms=['_', '_', '_', '_', './gmm1.pth'], path_density_unet='./model1.pth',
                                   unet=unet,
+                                  device=self.device,
                                   combination='last', K=4).to(self.device)
         super_model.Unet_init = True
         super_model.eval()
