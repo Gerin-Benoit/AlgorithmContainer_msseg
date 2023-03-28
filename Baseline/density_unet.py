@@ -14,11 +14,11 @@ from tqdm import tqdm
 
 
 class DensityUnet(nn.Module):
-    def __init__(self, path_density_unet, path_gmms, unet, device, combination='last', K=4):
+    def __init__(self, path_density_unet, path_gmms, unet, combination='last', K=4, level=None):
         super(DensityUnet, self).__init__()
         self.Unet = unet
         self.Unet_init = False
-        self.device = device
+
         self.GMM1 = None
         self.GMM2 = None
         self.GMM3 = None
@@ -34,39 +34,46 @@ class DensityUnet(nn.Module):
 
         self.channel_list = [20, 40, 80, 160, 320]
 
-        
+
         if path_density_unet is not None:
             self._load_unet(path_density_unet)
-        
+
 
         if path_gmms is not None:
-            self._load_GMMS(path_gmms, K=K)
+            self._load_GMMS(path_gmms, K=K, level = level)
 
     def _load_unet(self, path):
-        self.Unet.load_state_dict(torch.load(path, map_location=self.device))
+        self.Unet.load_state_dict(torch.load(path))
         self.Unet_init = True
 
-    def _load_GMMS(self, path, K=4):
-        if path[0] != '_':
-            self.GMM1 = GMMv1(num_channels=self.channel_list[4], K=K, init=False)
-            self.GMM1.load_state_dict(torch.load(path[0], map_location=self.device))
-            self.GMM1_init = True
-        if path[1] != '_':
-            self.GMM2 = GMMv1(num_channels=self.channel_list[3], K=K, init=False)
-            self.GMM2.load_state_dict(torch.load(path[1], map_location=self.device))
-            self.GMM2_init = True
-        if path[2] != '_':
-            self.GMM3 = GMMv1(num_channels=self.channel_list[2], K=K, init=False)
-            self.GMM3.load_state_dict(torch.load(path[2], map_location=self.device))
-            self.GMM3_init = True
-        if path[3] != '_':
-            self.GMM4 = GMMv1(num_channels=self.channel_list[1], K=K, init=False)
-            self.GMM4.load_state_dict(torch.load(path[3], map_location=self.device))
-            self.GMM4_init = True
-        if path[4] != '_':
-            self.GMM5 = GMMv1(num_channels=self.channel_list[0], K=K, init=False)
-            self.GMM5.load_state_dict(torch.load(path[4], map_location=self.device))
-            self.GMM5_init = True
+    def _load_GMMS(self, path, K=4, level=None):
+        print(path, level)
+        if level is not None:
+            if level ==5:
+                self.GMM5 = GMMv1(num_channels=self.channel_list[0], K=K, init=False)
+                self.GMM5.load_state_dict(torch.load(path))
+                self.GMM5_init = True
+        else:
+            if path[0] != '_':
+                self.GMM1 = GMMv1(num_channels=self.channel_list[4], K=K, init=False)
+                self.GMM1.load_state_dict(torch.load(path[0]))
+                self.GMM1_init = True
+            if path[1] != '_':
+                self.GMM2 = GMMv1(num_channels=self.channel_list[3], K=K, init=False)
+                self.GMM2.load_state_dict(torch.load(path[1]))
+                self.GMM2_init = True
+            if path[2] != '_':
+                self.GMM3 = GMMv1(num_channels=self.channel_list[2], K=K, init=False)
+                self.GMM3.load_state_dict(torch.load(path[2]))
+                self.GMM3_init = True
+            if path[3] != '_':
+                self.GMM4 = GMMv1(num_channels=self.channel_list[1], K=K, init=False)
+                self.GMM4.load_state_dict(torch.load(path[3]))
+                self.GMM4_init = True
+            if path[4] != '_':
+                self.GMM5 = GMMv1(num_channels=self.channel_list[0], K=K, init=False)
+                self.GMM5.load_state_dict(torch.load(path[4]))
+                self.GMM5_init = True
 
     def forward(self, x):
         if self.combination == 'last':
