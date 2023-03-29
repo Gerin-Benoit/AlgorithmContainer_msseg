@@ -7,6 +7,7 @@ import torch
 def entropy_of_expected(probs, mask=None, epsilon=1e-10):
     print("EOE")
     if mask == None:
+        print("if")
         mask = torch.eq(probs, -1)  # create boolean mask for values equal to -1
         probs_filtered = probs.clone()  # make a copy of probs tensor
         probs_filtered[mask] = 0  # set -1 values to 0 in filtered tensor
