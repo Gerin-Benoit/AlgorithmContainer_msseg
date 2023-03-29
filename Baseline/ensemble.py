@@ -265,8 +265,7 @@ class EnsembleUnet:
                     model_mask = confidences_flatten == 1  # look which models are confident
                     # print(model_mask.size())
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
-                    print(probs)
-                    probs = torch.where(probs == 0.0, -1.0,
+                    probs = torch.where(probs == 0.0, torch.tensor(-1.0, dtype=probs.dtype),
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
                 else:
                     probs = probs
