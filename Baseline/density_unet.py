@@ -47,7 +47,6 @@ class DensityUnet(nn.Module):
         self.Unet_init = True
 
     def _load_GMMS(self, path, K=4, level=None):
-        print(path, level)
         if level is not None:
             if level ==5:
                 self.GMM5 = GMMv1(num_channels=self.channel_list[0], K=K, init=False)

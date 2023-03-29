@@ -220,4 +220,5 @@ class Baseline(SegmentationAlgorithm):
 
 
 if __name__ == "__main__":
+    print('coucou')
     Baseline().process()
