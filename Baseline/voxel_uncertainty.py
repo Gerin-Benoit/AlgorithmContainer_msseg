@@ -14,8 +14,8 @@ def entropy_of_expected(probs, mask=None, epsilon=1e-10):
         print("if")
         probs_filtered[mask] = 0  # set -1 values to 0 in filtered tensor
         print("if")
-        print(torch.sum(torch.logical_not(mask), dim=0))
-        non_negative_count = torch.sum(torch.logical_not(mask), dim=0)  # count non-negative values
+        #non_negative_count = torch.sum(torch.logical_not(mask), dim=0)  # count non-negative values
+        non_negative_count = 1
         print("if")
         mean_probs = torch.sum(probs_filtered, dim=0) / non_negative_count  # compute mean excluding -1 values (for example if only 2 confident models -> divide the sum only by 2)
         print("if")
