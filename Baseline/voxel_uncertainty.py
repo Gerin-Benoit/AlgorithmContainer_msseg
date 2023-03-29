@@ -9,13 +9,11 @@ def entropy_of_expected(probs, mask=None, epsilon=1e-10):
     if mask == None:
         print("if")
         mask = torch.eq(probs, -1)  # create boolean mask for values equal to -1
-        print(mask.shape)
+
         probs_filtered = probs.clone()  # make a copy of probs tensor
-        print(probs_filtered.shape)
         probs_filtered[mask] = 0  # set -1 values to 0 in filtered tensor
-        non_negative_count = torch.sum(~mask, axis=0)  # count non-negative values
-        mean_probs = torch.sum(probs_filtered,
-                               axis=0) / non_negative_count  # compute mean excluding -1 values (for example if only 2 confident models -> divide the sum only by 2)
+        non_negative_count = torch.sum(~mask, dim=0)  # count non-negative values
+        mean_probs = torch.sum(probs_filtered, dim=0) / non_negative_count  # compute mean excluding -1 values (for example if only 2 confident models -> divide the sum only by 2)
         log_probs = torch.log(mean_probs + epsilon)
 
         eoe = -(mean_probs * log_probs)
