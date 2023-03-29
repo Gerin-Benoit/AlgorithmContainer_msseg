@@ -7,3 +7,4 @@ scikit-image==0.19.3
 monai==0.9.0
 faiss-cpu
 tqdm
+json

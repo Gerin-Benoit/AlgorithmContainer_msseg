@@ -59,7 +59,7 @@ class Baseline(SegmentationAlgorithm):
                 )
             ),
         )
-
+        print("checkpoint 0")
         output_path = Path("/output/images/")
         if not output_path.exists():
             output_path.mkdir()
