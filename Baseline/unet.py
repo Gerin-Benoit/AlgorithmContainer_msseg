@@ -500,7 +500,6 @@ class OutConv_Smooth_2D(nn.Module):
 class OutConv_Smooth_3D(nn.Module):
     def __init__(self, in_channels, out_channels, in_shape, c=1):
         super().__init__()
-        print(out_channels)
         self.conv = wrapper_spectral_norm(nn.Conv3d(in_channels, out_channels, kernel_size=1), in_shape, 1, c=c)
 
     def forward(self, x):
