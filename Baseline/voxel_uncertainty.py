@@ -18,6 +18,7 @@ def entropy_of_expected(probs, mask=None, epsilon=1e-10):
         eoe = -(mean_probs * log_probs)
         return eoe
     else:
+        print("else")
         weighted_mask = mask.float() + (1 - mask.float()) * 0.5
         probs_filtered = probs.clone()  # make a copy of probs tensor
         non_negative_count = torch.sum(weighted_mask, axis=0)  # count non-negative values
