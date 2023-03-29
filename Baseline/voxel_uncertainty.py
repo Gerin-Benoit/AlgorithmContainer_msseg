@@ -17,6 +17,7 @@ def entropy_of_expected(probs, mask=None, epsilon=1e-10):
         log_probs = torch.log(mean_probs + epsilon)
 
         eoe = -(mean_probs * log_probs)
+        print("if")
         return eoe
     else:
         print("else")
