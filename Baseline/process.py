@@ -211,8 +211,8 @@ class Baseline(SegmentationAlgorithm):
 
             uncs_map = - conf_map
 
-
-
+            print(val_outputs.shape,uncs_map.shape)
+        print("here")
         out_seg = SimpleITK.GetImageFromArray(val_outputs)
         out_unc = SimpleITK.GetImageFromArray(uncs_map)
         print("checkpoint 7")
