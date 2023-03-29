@@ -265,7 +265,7 @@ class EnsembleUnet:
                     model_mask = confidences_flatten == 1  # look which models are confident
                     # print(model_mask.size())
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
-                    probs = torch.where(probs == 0.0, torch.tensor(-1.0, dtype=probs.dtype),
+                    probs = torch.where(probs == 0,1 , #torch.tensor(-1.0, dtype=probs.dtype)
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
                 else:
                     probs = probs
@@ -278,8 +278,6 @@ class EnsembleUnet:
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.mean_vote(probs, th)
                     final_outputs.view(-1)[indices_mask] = preds_final
-            print('ICI')
-            print(preds_final.ok)
             return final_confidences.numpy(), final_outputs.numpy()
 
         elif combination == 'weighted_mean_vote_combined':
