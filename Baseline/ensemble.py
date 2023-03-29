@@ -267,6 +267,7 @@ class EnsembleUnet:
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
                     probs = torch.where(probs == 0.0, torch.tensor(-1.0, dtype=probs.dtype),
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
+                    print(probs.shape)
                 else:
                     probs = probs
 
