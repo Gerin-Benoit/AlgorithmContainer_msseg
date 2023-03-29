@@ -71,7 +71,7 @@ class Baseline(SegmentationAlgorithm):
         # self._segmentation_output_path = Path("/output/segmentation/")
         # self._uncertainty_output_path = Path("/output/uncertainty/")
 
-        self.device = 'cuda' #get_default_device()
+        self.device = get_default_device()
 
         self.Ke = 1
 
