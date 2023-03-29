@@ -79,15 +79,7 @@ class Baseline(SegmentationAlgorithm):
         self.roi_size = roi_size
         in_channels, out_channels = 1, 2
         in_shape = (in_channels,) + roi_size
-        unet = PytorchUNet3D(in_shape,
-                             c=None,
-                             norm_layer=ActNormLP3D,
-                             num_classes=out_channels,
-                             n_channels=in_channels,
-                             device=self.device,
-                             cout=None).to(self.device)
-        x = torch.rand((1, 1,) + roi_size).to(self.device)
-        y = unet(x)
+        print("checkpoint 1")
 
         unets = []
         for i in range(3):
@@ -113,9 +105,7 @@ class Baseline(SegmentationAlgorithm):
 
         super_model = EnsembleUnet(Unets=super_models, path_stats='./stats.json')
 
-
-
-
+        print("checkpoint 2")
 
         self.super_model = super_model
         self.act = torch.nn.Softmax(dim=1)
@@ -129,7 +119,7 @@ class Baseline(SegmentationAlgorithm):
 
 
     def process_case(self, *, idx, case):
-
+        print("checkpoint 3")
         # Load and test the image for this case
         input_image, input_image_file_path = self._load_input_image(case=case)
 
@@ -163,7 +153,7 @@ class Baseline(SegmentationAlgorithm):
         }
 
     def predict(self, *, input_image: SimpleITK.Image) -> SimpleITK.Image:
-
+        print("checkpoint 4")
         image = SimpleITK.GetArrayFromImage(input_image)
         image = np.transpose(np.array(image))
 
@@ -205,6 +195,7 @@ class Baseline(SegmentationAlgorithm):
             ens_outputs = []  # real predictions
 
             ens_confidences = []
+            print("checkpoint 5")
             for i in range(len(self.super_model.Unets)):
                 model = self.super_model.get_model(i)
                 val_outputs, val_confidences = inference(val_inputs, model)
@@ -212,7 +203,7 @@ class Baseline(SegmentationAlgorithm):
                 conf_map = torch.squeeze(val_confidences.cpu())
                 ens_outputs.append(torch.tensor(val_outputs))
                 ens_confidences.append(conf_map)
-
+            print("checkpoint 6")
             conf_map, val_outputs = self.super_model.combine_confidences(ens_confidences, ens_outputs, self.th, self.method, self.alpha)
 
             val_outputs = remove_connected_components(val_outputs.reshape(H, W, Z))
@@ -224,6 +215,7 @@ class Baseline(SegmentationAlgorithm):
 
         out_seg = SimpleITK.GetImageFromArray(val_outputs)
         out_unc = SimpleITK.GetImageFromArray(uncs_map)
+        print("checkpoint 7")
         return out_seg, out_unc
 
 
