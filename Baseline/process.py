@@ -98,7 +98,7 @@ class Baseline(SegmentationAlgorithm):
         for i, unet in enumerate(unets):
             super_model = DensityUnet(path_gmms=f'./gmm{i+1}.pth', path_density_unet=f'./model{i+1}.pth',
                                       unet=unets[i], device=self.device,
-                                      combination='last', K=4, level=5).to(self.device)
+                                      combination='last', K=2, level=5).to(self.device)
             super_model.Unet_init = True
             super_model.eval()
             super_models.append(super_model)
