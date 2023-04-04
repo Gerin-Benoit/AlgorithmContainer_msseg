@@ -111,9 +111,9 @@ class Baseline(SegmentationAlgorithm):
         self.sw_batch_size = 6
         self.overlap = 0.5
 
-        self.method = 'mean_vote_combined'
-        self.alpha = 20
-        self.th = 0.5
+        self.method = 'logprob_mean_vote'
+        self.alpha = 0
+        self.th = 0.7
 
 
     def process_case(self, *, idx, case):
@@ -199,7 +199,7 @@ class Baseline(SegmentationAlgorithm):
                 ens_confidences.append(conf_map)
             conf_map, val_outputs = self.super_model.combine_confidences(ens_confidences, ens_outputs, self.th, self.method, self.alpha)
 
-            val_outputs = remove_connected_components(val_outputs.reshape(H, W, Z))
+            #val_outputs = remove_connected_components(val_outputs.reshape(H, W, Z))
             conf_map = conf_map.reshape(H, W, Z)
 
             uncs_map = - conf_map

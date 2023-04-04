@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-from voxel_uncertainty import voxel_uncertainty
+from voxel_uncertainty import voxel_uncertainty, weighted_expectation_of_entropy, expectation_of_entropy, \
+    entropy_of_expected
 import numpy as np
 import json
 import math
@@ -50,8 +51,10 @@ class EnsembleUnet:
             return mode.numpy()
 
     def majority_vote(self, probs, th):
+        print('-' * 20)
+        print(probs.shape)
         mask = ~torch.eq(probs, -1)  # create boolean mask for values different of -1
-
+        print(mask.shape)
         n_models = probs.shape[0]
         new_probs = torch.zeros_like(probs)
 
@@ -59,7 +62,7 @@ class EnsembleUnet:
         new_probs[probs < th] = 0
 
         non_negative_count = torch.sum(mask, axis=0)  # count non-negative values
-
+        print(non_negative_count.shape)
         mode = torch.sum(new_probs, dim=0)
 
         mode[mode > non_negative_count // 2] = 1
@@ -69,10 +72,10 @@ class EnsembleUnet:
         remaining_count = torch.sum(remaining)
 
         if remaining_count > 1:
-
+            print('remaining', remaining_count)
             confidences = torch.abs(probs[:, remaining] - th)
             argmax = torch.argmax(confidences, dim=0)
-
+            print(argmax)
             mode[remaining] = new_probs[argmax, remaining]
         return mode
 
@@ -91,8 +94,8 @@ class EnsembleUnet:
 
         return mode
 
-    def weighted_mean_vote(self, probs, mask, th):
-        weighted_mask = mask.float() + (1 - mask.float()) * 0.5
+    def weighted_mean_vote(self, probs, mask, weight_unconfident, th):
+        weighted_mask = mask.float() + (1 - mask.float()) * weight_unconfident
         n_models = probs.shape[0]
         new_probs = torch.zeros_like(probs)
         new_probs[probs >= th] = 1
@@ -104,6 +107,16 @@ class EnsembleUnet:
         mode[mode < th] = 0
 
         return mode
+
+    def logprob_mean_vote(self, probs, confs, th):
+        weights = confs / torch.sum(confs, dim=0, keepdim=True)
+
+        # Compute the weighted mean predictions
+        mean_probs = torch.sum(weights * probs, dim=0)
+
+        # Apply the threshold
+
+        return mean_probs
 
     '''
         def majority_vote(self, probs, th):
@@ -132,7 +145,8 @@ class EnsembleUnet:
             return mode
     '''
 
-    def combine_confidences(self, confidences, outputs, th, combination, alpha=2):
+    def combine_confidences(self, confidences, outputs, th, combination, alpha=2, unc_measure='EOE',
+                            weight_unconfident=0.5):
 
         confidences_filtered = []
         final_confidences = torch.zeros_like(confidences[0])
@@ -168,7 +182,7 @@ class EnsembleUnet:
                 probs = probs.view(probs.shape[0], -1)[:, indices_mask]  # get the corresponding predictions
                 if i != 0:  # if i!=0 need to only select the confident models
                     model_mask = confidences_flatten == 1  # look which models are confident
-
+                    # print(model_mask.size())
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
                     probs = torch.where(probs == 0, -1,
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
@@ -177,8 +191,8 @@ class EnsembleUnet:
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-
-                    unc = -voxel_uncertainty(probs=probs, measure='EOE') + values_for_shift[i]
+                    print(i, probs.shape)
+                    unc = -voxel_uncertainty(probs=probs, measure=unc_measure) + values_for_shift[i]
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.majority_vote(probs, th)
                     final_outputs.view(-1)[indices_mask] = preds_final
@@ -214,7 +228,7 @@ class EnsembleUnet:
                 probs = probs.view(probs.shape[0], -1)[:, indices_mask]  # get the corresponding predictions
                 if i != 0:  # if i!=0 need to only select the confident models
                     model_mask = confidences_flatten == 1  # look which models are confident
-
+                    # print(model_mask.size())
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
                     probs = torch.where(probs == 0, -1,
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
@@ -223,9 +237,9 @@ class EnsembleUnet:
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-
-                    unc = -voxel_uncertainty(probs=probs, measure='EOE')
-
+                    print(i, probs.shape)
+                    unc = -voxel_uncertainty(probs=probs, measure=unc_measure)
+                    print(unc)
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.majority_vote(probs, th)
                     final_outputs.view(-1)[indices_mask] = preds_final
@@ -263,20 +277,20 @@ class EnsembleUnet:
                     model_mask = confidences_flatten == 1  # look which models are confident
                     # print(model_mask.size())
                     probs = probs * model_mask  # set to 0 the predictions for unconfident models
-                    probs = torch.where(probs == 0.0, torch.tensor(-1.0, dtype=probs.dtype),
+                    probs = torch.where(probs == 0, -1,
                                         probs)  # set to -1 the predictions for unconfident models (see after for compting uncertainty)
-
                 else:
                     probs = probs
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-
-                    unc = -voxel_uncertainty(probs=probs, measure='EOE')
-
+                    print(i, probs.shape)
+                    unc = -voxel_uncertainty(probs=probs, measure=unc_measure)
+                    print(unc)
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.mean_vote(probs, th)
                     final_outputs.view(-1)[indices_mask] = preds_final
+
             return final_confidences.numpy(), final_outputs.numpy()
 
         elif combination == 'weighted_mean_vote_combined':
@@ -314,12 +328,31 @@ class EnsembleUnet:
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-                    unc = -voxel_uncertainty(probs=probs, mask=model_mask, measure='EOE')
+                    unc = -voxel_uncertainty(probs=probs, mask=model_mask, measure=unc_measure,
+                                             weight_unconfident=weight_unconfident)
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
-                    preds_final = self.weighted_mean_vote(probs, model_mask, th)
+                    preds_final = self.weighted_mean_vote(probs, model_mask, weight_unconfident, th)
                     final_outputs.view(-1)[indices_mask] = preds_final
 
             return final_confidences.numpy(), final_outputs.numpy()
+
+        elif combination == 'logprob_mean_vote':
+
+            # outputs = [M, H, W, Z], confidences = [M, H, W, Z]
+            confidences = torch.stack(confidences)
+            confidences = confidences - torch.min(
+                confidences) + 1e-2  # only positive confidences (slight margin to avoid 0 in weighted mean)
+
+            probs = torch.stack(outputs)
+
+            predictions = self.logprob_mean_vote(probs, confidences, th)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            #unc = -voxel_uncertainty(probs=probs, measure=unc_measure)  # .numpy()
+            unc = torch.abs(predictions-th)
+            # unc = torch.amax(confidences, dim=0)
+
+            # unc = -weighted_expectation_of_entropy(probs, confidences, epsilon=1e-10)
+            return unc.numpy(), predictions_th.numpy()
 
         elif combination == 'majority_vote_combined_confidents':
             for i in range(len(self.Unets)):
@@ -361,7 +394,8 @@ class EnsembleUnet:
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-                    unc = -voxel_uncertainty(probs=probs, measure='EOE') + offset
+                    print(i, probs.shape)
+                    unc = -voxel_uncertainty(probs=probs, measure=unc_measure) + offset
 
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.majority_vote(probs, th)
@@ -409,7 +443,8 @@ class EnsembleUnet:
 
                 if len(indices_mask) > 0:  # if at least one prediction
                     # probs = stacked_outputs.view(stacked_outputs.shape[0], -1)[:, indices_mask]
-                    unc = -voxel_uncertainty(probs=probs, measure='EOE') + offset
+                    print(i, probs.shape)
+                    unc = -voxel_uncertainty(probs=probs, measure=unc_measure) + offset
 
                     final_confidences.view(-1)[indices_mask] = unc  # fill the uncertainty at the corresponding indices
                     preds_final = self.mean_vote(probs, th)
@@ -431,6 +466,7 @@ class EnsembleUnet:
                 confidences_filtered.append(conf)  # 1 if in-distribution, 0 otherwise
             stacked_confidences_filtered = torch.stack(confidences_filtered)
             count = torch.sum(stacked_confidences_filtered, dim=0).squeeze()
+            print('count', count.shape)
             shape = count.shape
             count = count.flatten()
             values, indices = torch.sort(count, descending=True)
@@ -450,8 +486,8 @@ class EnsembleUnet:
                 else:
                     probs = probs
 
-                unc = voxel_uncertainty(probs=probs, measure='EOE') + values_for_shift[i]
-
+                unc = voxel_uncertainty(probs=probs, measure=unc_measure) + values_for_shift[i]
+                print(unc.shape)
                 final_confidences[indices_mask] = unc
             # get the indices of the 3 values, order them, 2 values, order them and so on.
 
