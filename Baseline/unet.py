@@ -5,6 +5,9 @@ import torch.distributions as D
 import numpy as np
 from spectral_norm_conv_inplace import *
 from spectral_norm_fc import *
+from monai.networks import nets as nets
+from monai.utils import ensure_tuple_rep
+from swin_attention import SwinL2AttentionBasicLayer
 
 
 # from sklearn.mixture import GaussianMixture
@@ -44,7 +47,7 @@ class ActNormLP2D(nn.Module):
 
 
 class ActNormLP3D(nn.Module):
-    def __init__(self, num_channels):
+    def __init__(self, num_channels, affine=True):
         super(ActNormLP3D, self).__init__()
         self.num_channels = num_channels
         self._log_scale = Parameter(torch.Tensor(num_channels))
@@ -127,6 +130,7 @@ class bottleneck_2D(nn.Module):
         residual = self.Residual(x)
         return self.out_activation(identity + residual)
 
+
 class bottleneck_block_2D(nn.Module):
 
     def __init__(self, norm_layer, in_shape, activation, bottleneck_reduction=2, repetition=2, bias=True, c=1):
@@ -135,7 +139,8 @@ class bottleneck_block_2D(nn.Module):
         self.n_channels = C
         self.repetition = repetition
         module_list = [
-            bottleneck_2D(norm_layer=norm_layer, channels=C, in_shape=in_shape, activation=activation, bottleneck_reduction=bottleneck_reduction, bias=bias, c=c) for
+            bottleneck_2D(norm_layer=norm_layer, channels=C, in_shape=in_shape, activation=activation,
+                          bottleneck_reduction=bottleneck_reduction, bias=bias, c=c) for
             i in range(repetition)]
         self.multi_residual = nn.Sequential(*module_list)
 
@@ -144,18 +149,32 @@ class bottleneck_block_2D(nn.Module):
 
 
 class basic_block_3D(nn.Module):
-    def __init__(self, norm_layer, in_shape, activation, bottleneck_reduction=2, repetition=2, bias=True, c=1):
+    def __init__(self, norm_layer, in_shape, activation, bottleneck_reduction=2, repetition=2, bias=True, c=1,
+                 dropout=0):
         super().__init__()
         C, H, W, Z = in_shape
-        self.Residual = nn.Sequential(
-            wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
-                                  (C, H, W, Z), 3, c=c),
-            norm_layer(C),
-            activation(inplace=True),
-            wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
-                                  (C, H, W, Z), 3, c=c),
-            norm_layer(C),
-        )
+        if dropout != 0:
+            self.Residual = nn.Sequential(
+                wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
+                                      (C, H, W, Z), 3, c=c),
+                norm_layer(C, affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm((C, H, W, Z)),
+                nn.Dropout3d(p=dropout, inplace=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
+                                      (C, H, W, Z), 3, c=c),
+                norm_layer(C, affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm((C, H, W, Z)),
+                nn.Dropout3d(p=dropout, inplace=True),
+            )
+        else:
+            self.Residual = nn.Sequential(
+                wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
+                                      (C, H, W, Z), 3, c=c),
+                norm_layer(C, affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm((C, H, W, Z)),
+                activation(inplace=True),
+                wrapper_spectral_norm(nn.Conv3d(C, C, kernel_size=3, padding=1, stride=1, bias=bias),
+                                      (C, H, W, Z), 3, c=c),
+                norm_layer(C, affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm((C, H, W, Z)),
+            )
         self.out_activation = activation(inplace=True)
 
     def forward(self, x):
@@ -165,28 +184,61 @@ class basic_block_3D(nn.Module):
 
 
 class bottleneck_3D(nn.Module):
-    def __init__(self, norm_layer, channels, in_shape, activation, bottleneck_reduction=2, bias=True, c=1):
+    def __init__(self, norm_layer, channels, in_shape, activation, bottleneck_reduction=2, bias=True, c=1, dropout=0):
         super().__init__()
         C, H, W, Z = in_shape
-        self.Residual = nn.Sequential(
-            wrapper_spectral_norm(
-                nn.Conv3d(channels, channels // bottleneck_reduction, kernel_size=1, padding=0, stride=1, bias=bias),
-                (C, H, W, Z), 1, c=c),
-            norm_layer(channels // bottleneck_reduction),
-            activation(inplace=True),
-            wrapper_spectral_norm(
-                nn.Conv3d(channels // bottleneck_reduction, channels // bottleneck_reduction, kernel_size=3, padding=1,
-                          stride=1, bias=bias),
-                (C // bottleneck_reduction, H, W, Z), 3, c=c),
-            norm_layer(channels // bottleneck_reduction),
-            activation(inplace=True),
-            wrapper_spectral_norm(
-                nn.Conv3d(channels // bottleneck_reduction, channels, kernel_size=1, padding=0,
-                          stride=1, bias=bias),
-                (C // bottleneck_reduction, H, W, Z), 1, c=c),
-            norm_layer(channels)
+        if dropout != 0:
+            self.Residual = nn.Sequential(
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels, channels // bottleneck_reduction, kernel_size=1, padding=0, stride=1,
+                              bias=bias),
+                    (C, H, W, Z), 1, c=c),
+                norm_layer(channels // bottleneck_reduction,
+                           affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (channels // bottleneck_reduction, H, W, Z)),
+                nn.Dropout3d(p=dropout, inplace=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels // bottleneck_reduction, channels // bottleneck_reduction, kernel_size=3,
+                              padding=1,
+                              stride=1, bias=bias),
+                    (C // bottleneck_reduction, H, W, Z), 3, c=c),
+                norm_layer(channels // bottleneck_reduction,
+                           affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (channels // bottleneck_reduction, H, W, Z)),
+                nn.Dropout3d(p=dropout, inplace=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels // bottleneck_reduction, channels, kernel_size=1, padding=0,
+                              stride=1, bias=bias),
+                    (C // bottleneck_reduction, H, W, Z), 1, c=c),
+                norm_layer(channels, affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (channels, H, W, Z)),
+                nn.Dropout3d(p=dropout, inplace=True),
 
-        )
+            )
+        else:
+            self.Residual = nn.Sequential(
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels, channels // bottleneck_reduction, kernel_size=1, padding=0, stride=1,
+                              bias=bias),
+                    (C, H, W, Z), 1, c=c),
+                norm_layer(channels // bottleneck_reduction, affine=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels // bottleneck_reduction, channels // bottleneck_reduction, kernel_size=3,
+                              padding=1,
+                              stride=1, bias=bias),
+                    (C // bottleneck_reduction, H, W, Z), 3, c=c),
+                norm_layer(channels // bottleneck_reduction, affine=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(channels // bottleneck_reduction, channels, kernel_size=1, padding=0,
+                              stride=1, bias=bias),
+                    (C // bottleneck_reduction, H, W, Z), 1, c=c),
+                norm_layer(channels, affine=True),
+
+            )
         self.out_activation = activation(inplace=True)
 
     def forward(self, x):
@@ -197,13 +249,15 @@ class bottleneck_3D(nn.Module):
 
 class bottleneck_block_3D(nn.Module):
 
-    def __init__(self, norm_layer, in_shape, activation, bottleneck_reduction=2, repetition=2, bias=True, c=1):
+    def __init__(self, norm_layer, in_shape, activation, bottleneck_reduction=2, repetition=2, bias=True, c=1,
+                 dropout=0):
         super().__init__()
         C, H, W, Z = in_shape
         self.n_channels = C
         self.repetition = repetition
         module_list = [
-            bottleneck_3D(norm_layer=norm_layer, channels=C, in_shape=in_shape, activation=activation, bottleneck_reduction=bottleneck_reduction, bias=bias, c=c) for
+            bottleneck_3D(norm_layer=norm_layer, channels=C, in_shape=in_shape, activation=activation,
+                          bottleneck_reduction=bottleneck_reduction, bias=bias, c=c, dropout=dropout) for
             i in range(repetition)]
         self.multi_residual = nn.Sequential(*module_list)
 
@@ -229,38 +283,41 @@ class PytorchUNet2D(nn.Module):
         C, H, W = in_shape
         self.num_classes = num_classes
         self.n_channels = n_channels
-        self.device=device
-        self.channels_list = [20, 40, 80, 160, 320] #[32, 64, 128, 256, 512] #[20, 40, 80, 160, 320]
+        self.device = device
+        self.channels_list = [16, 32, 64, 128, 256]  # [32, 64, 128, 256, 512] #[20, 40, 80, 160, 320]
 
         in_channels = n_channels
         out_channels = self.channels_list[0]
 
-
         self.inc = nn.Sequential(
             wrapper_spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=True), (C, H, W),
                                   3, c=c),
-            norm_layer(out_channels),
+            norm_layer(out_channels, affine=True),
             activation(inplace=True),
             wrapper_spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=True),
                                   (out_channels, H, W), 3, c=c),
-            norm_layer(out_channels),
+            norm_layer(out_channels, affine=True),
             activation(inplace=True)
         )
         self.down_list = nn.ModuleList([])
         for i in range(depth):
-            self.down_list.append(Down_Smooth_2D(self.channels_list[i], self.channels_list[i+1], norm_layer,
-                                    in_shape=(self.channels_list[i], H//(2**i), W//(2**i)), activation=activation, block_type=block_type,
-                                    bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c))
+            self.down_list.append(Down_Smooth_2D(self.channels_list[i], self.channels_list[i + 1], norm_layer,
+                                                 in_shape=(self.channels_list[i], H // (2 ** i), W // (2 ** i)),
+                                                 activation=activation, block_type=block_type,
+                                                 bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c))
 
         # Decoder for the segmentation task
-        self.bottom = Up_Smooth_Bottom_2D(self.channels_list[depth], self.channels_list[depth-1], norm_layer,
-                                       in_shape=(self.channels_list[depth], H // (2**depth), W // (2**depth)), activation=activation, block_type=block_type,
-                                    bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c)
+        self.bottom = Up_Smooth_Bottom_2D(self.channels_list[depth], self.channels_list[depth - 1], norm_layer,
+                                          in_shape=(self.channels_list[depth], H // (2 ** depth), W // (2 ** depth)),
+                                          activation=activation, block_type=block_type,
+                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c)
         self.up_list = nn.ModuleList([])
-        for i in range(depth-1, 0, -1):
-            self.up_list.append(Up_Smooth_2D(self.channels_list[i] * 2, self.channels_list[i-1], norm_layer,
-                                in_shape=(self.channels_list[i] * 2, H // (2**(i-1)), W // 2**(i-1)), activation=activation, block_type=block_type,
-                                    bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c))
+        for i in range(depth - 1, 0, -1):
+            self.up_list.append(Up_Smooth_2D(self.channels_list[i] * 2, self.channels_list[i - 1], norm_layer,
+                                             in_shape=(
+                                                 self.channels_list[i] * 2, H // (2 ** (i - 1)), W // 2 ** (i - 1)),
+                                             activation=activation, block_type=block_type,
+                                             bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c))
 
         self.outc = OutConv_Smooth_2D(self.channels_list[0], num_classes, in_shape=(self.channels_list[0], H, W),
                                       c=None)  # prediction for each voxel
@@ -277,7 +334,7 @@ class PytorchUNet2D(nn.Module):
         x = self.bottom(fms[-1])
 
         for i, up in enumerate(self.up_list):
-            x = up(x,fms[-(i+2)])
+            x = up(x, fms[-(i + 2)])
 
         x = self.outc(x)
 
@@ -289,7 +346,6 @@ class PytorchUNet2D(nn.Module):
         for down in self.down_list:
             x = down(x)
             fms.append(x)
-
 
         x = self.bottom(fms[-1])
         fm_density = [x]
@@ -338,7 +394,11 @@ class PytorchUNet3D(nn.Module):
                  repetition=2,
                  depth=4,
                  cout=1,
-                 device='cpu'
+                 device='cpu',
+                 ssl=False,
+                 dropout=0.0,
+                 dropout_style=None,
+                 swin=False
                  ):
         super(PytorchUNet3D, self).__init__()
         """Unet"""
@@ -346,44 +406,100 @@ class PytorchUNet3D(nn.Module):
         self.num_classes = num_classes
         self.n_channels = n_channels
         self.device = device
-        self.channels_list = [20, 40, 80, 160, 320]
+        self.channels_list = [12, 24, 48, 96, 192] if swin else [20, 40, 80, 160, 320]
+        self.num_heads = [3, 3, 4, 4, 6]
+        self.window_size = ensure_tuple_rep(7, 3)
+        self.dropout = dropout
+        self.dropout_style = dropout_style
 
-
-        self.inc = nn.Sequential(
-            wrapper_spectral_norm(nn.Conv3d(n_channels, self.channels_list[0], kernel_size=3, padding=1, bias=True),
-                                  (C, H, W, Z), 3, c=cout),
-            norm_layer(self.channels_list[0]),
-            activation(inplace=True),
-            wrapper_spectral_norm(
-                nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1, bias=True),
-                (self.channels_list[0], H, W, Z), 3, c=cout),
-            norm_layer(self.channels_list[0]),
-            activation(inplace=True)
-        )
+        if dropout != 0:
+            self.inc = nn.Sequential(
+                wrapper_spectral_norm(nn.Conv3d(n_channels, self.channels_list[0], kernel_size=3, padding=1, bias=True),
+                                      (C, H, W, Z), 3, c=cout),
+                norm_layer(self.channels_list[0], affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (self.channels_list[0], H, W, Z)),
+                nn.Dropout3d(p=self.dropout, inplace=True),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1, bias=True),
+                    (self.channels_list[0], H, W, Z), 3, c=cout),
+                norm_layer(self.channels_list[0], affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (self.channels_list[0], H, W, Z)),
+                nn.Dropout3d(p=self.dropout, inplace=True),
+                activation(inplace=True)
+            )
+        else:
+            self.inc = nn.Sequential(
+                wrapper_spectral_norm(nn.Conv3d(n_channels, self.channels_list[0], kernel_size=3, padding=1, bias=True),
+                                      (C, H, W, Z), 3, c=cout),
+                norm_layer(self.channels_list[0], affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (self.channels_list[0], H, W, Z)),
+                activation(inplace=True),
+                wrapper_spectral_norm(
+                    nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1, bias=True),
+                    (self.channels_list[0], H, W, Z), 3, c=cout),
+                norm_layer(self.channels_list[0], affine=True) if not norm_layer == nn.LayerNorm else nn.LayerNorm(
+                    (self.channels_list[0], H, W, Z)),
+                activation(inplace=True)
+            )
 
         self.down_list = nn.ModuleList([])
         for i in range(depth):
             self.down_list.append(Down_Smooth_3D(self.channels_list[i], self.channels_list[i + 1], norm_layer,
-                                                 in_shape=(self.channels_list[i], H // (2 ** i), W // (2 ** i), Z // (2 ** i)),
+                                                 in_shape=(
+                                                     self.channels_list[i], H // (2 ** i), W // (2 ** i),
+                                                     Z // (2 ** i)),
                                                  activation=activation, block_type=block_type,
-                                                 bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c, cout=cout))
+                                                 bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c,
+                                                 cout=cout, dropout=self.dropout))
 
-        # Decoder for the segmentation task
-        self.bottom = Up_Smooth_Bottom_3D(self.channels_list[depth], self.channels_list[depth-1], norm_layer,
-                                          in_shape=(
-                                          self.channels_list[depth], H // (2 ** depth), W // (2 ** depth), Z // (2 ** depth)),
-                                          activation=activation, block_type=block_type,
-                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c, cout=cout)
-        self.up_list = nn.ModuleList([])
-        for i in range(depth - 1, 0, -1):
-            self.up_list.append(Up_Smooth_3D(self.channels_list[i] * 2, self.channels_list[i - 1], norm_layer,
-                                             in_shape=(
-                                             self.channels_list[i] * 2, H // (2 ** (i - 1)), W // 2 ** (i - 1), Z // 2 ** (i - 1)),
-                                             activation=activation, block_type=block_type,
-                                             bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c, cout=cout))
+        if ssl:
+            # Decoder for the ssl task
+            self.bottom = Up_Smooth_Bottom_3D(self.channels_list[depth], self.channels_list[depth - 1], norm_layer,
+                                              in_shape=(
+                                                  self.channels_list[depth], H // (2 ** depth), W // (2 ** depth),
+                                                  Z // (2 ** depth)),
+                                              activation=activation, block_type=block_type,
+                                              bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c,
+                                              cout=cout, dropout=self.dropout)
 
-        self.outc = OutConv_Smooth_3D(self.channels_list[0], num_classes, in_shape=(self.channels_list[0], H, W, Z),
-                                      c=None)  # prediction for each voxel
+            self.up_list = nn.ModuleList([])
+            for i in range(depth - 1, 0, -1):
+                self.up_list.append(Up_Layer_3D(self.channels_list[i] * 2, self.channels_list[i - 1], norm_layer,
+                                                in_shape=(
+                                                    self.channels_list[i] * 2, H // (2 ** (i - 1)), W // 2 ** (i - 1),
+                                                    Z // 2 ** (i - 1)),
+                                                activation=activation, block_type=block_type,
+                                                bottleneck_reduction=bottleneck_reduction, repetition=repetition,
+                                                c=None, dropout=self.dropout))
+
+            self.outc = OutConv_Smooth_3D(self.channels_list[0], n_channels, in_shape=(self.channels_list[0], H, W, Z),
+                                          c=None)  # prediction for each voxel
+
+
+        else:
+            # Decoder for the segmentation task
+            self.bottom = Up_Smooth_Bottom_3D(self.channels_list[depth], self.channels_list[depth - 1], norm_layer,
+                                              in_shape=(
+                                                  self.channels_list[depth], H // (2 ** depth), W // (2 ** depth),
+                                                  Z // (2 ** depth)),
+                                              activation=activation, block_type=block_type,
+                                              bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c,
+                                              cout=cout, dropout=self.dropout, swin=swin,
+                                              num_heads=self.num_heads[depth], window_size=self.window_size)
+            self.up_list = nn.ModuleList([])
+            for i in range(depth - 1, 0, -1):
+                self.up_list.append(Up_Smooth_3D(self.channels_list[i] * 2, self.channels_list[i - 1], norm_layer,
+                                                 in_shape=(
+                                                     self.channels_list[i] * 2, H // (2 ** i), W // 2 ** i,
+                                                     Z // 2 ** i),
+                                                 activation=activation, block_type=block_type,
+                                                 bottleneck_reduction=bottleneck_reduction, repetition=repetition, c=c,
+                                                 cout=cout, dropout=self.dropout, swin=swin,
+                                                 num_heads=self.num_heads[i], window_size=self.window_size))
+
+            self.outc = OutConv_Smooth_3D(self.channels_list[0], num_classes, in_shape=(self.channels_list[0], H, W, Z),
+                                          c=None)  # prediction for each voxel
         """Spectral Normalization"""
         self.smoothness = torch.tensor(c).to(self.device) if c is not None else None
 
@@ -399,6 +515,21 @@ class PytorchUNet3D(nn.Module):
 
         for i, up in enumerate(self.up_list):
             x = up(x, fms[-(i + 2)])
+
+        x = self.outc(x)
+
+        return x
+
+    def forward_ssl(self, x):
+        x = self.inc(x)
+
+        for down in self.down_list:
+            x = down(x)
+
+        x = self.bottom(x)
+
+        for i, up in enumerate(self.up_list):
+            x = up(x)
 
         x = self.outc(x)
 
@@ -442,9 +573,10 @@ class PytorchUNet3D(nn.Module):
 
     def clamp_norm_layers(self):
         if self.smoothness is not None:
+            c = self.smoothness if self.smoothness > 0 else -self.smoothness
             for name, p in self.named_parameters():
                 if "_log_scale" in name:
-                    p.data.clamp_(None, torch.log(self.smoothness))
+                    p.data.clamp_(None, torch.log(c))
 
 
 class ReshapeLayer2D(nn.Module):
@@ -500,6 +632,7 @@ class OutConv_Smooth_2D(nn.Module):
 class OutConv_Smooth_3D(nn.Module):
     def __init__(self, in_channels, out_channels, in_shape, c=1):
         super().__init__()
+
         self.conv = wrapper_spectral_norm(nn.Conv3d(in_channels, out_channels, kernel_size=1), in_shape, 1, c=c)
 
     def forward(self, x):
@@ -519,8 +652,10 @@ class Down_Smooth_2D(nn.Module):
                                              (2 * C, H, W), 1, c=c)
         self.pooling = nn.MaxPool2d(kernel_size=2, padding=0, stride=2)  # padding et stride à verifier
 
-        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H//2, W//2), activation=activation,
-                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias, c=c)
+        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H // 2, W // 2),
+                                          activation=activation,
+                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
+                                          c=c)
 
     def forward(self, x):
         x = self.in_conv(x)
@@ -531,7 +666,7 @@ class Down_Smooth_2D(nn.Module):
 class Down_Smooth_3D(nn.Module):
 
     def __init__(self, in_channels, out_channels, norm_layer, in_shape, activation, block_type=bottleneck_block_3D,
-                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1):
+                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1, dropout=0):
         super().__init__()
         # 1x1 invertible conv
         # MaxPooling
@@ -543,8 +678,10 @@ class Down_Smooth_3D(nn.Module):
                                              (C, H, W, Z), 1, c=cout)
         self.pooling = nn.MaxPool3d(kernel_size=2, padding=0, stride=2)  # padding et stride à verifier
 
-        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H//2, W//2, Z//2), activation=activation,
-                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias, c=c)
+        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H // 2, W // 2, Z // 2),
+                                          activation=activation,
+                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
+                                          c=c, dropout=dropout)
 
     def forward(self, x):
         x = self.in_conv(x)
@@ -581,7 +718,8 @@ class Up_Smooth_2D(nn.Module):
 class Up_Smooth_3D(nn.Module):
 
     def __init__(self, in_channels, out_channels, norm_layer, in_shape, activation, block_type=bottleneck_block_3D,
-                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1):
+                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1, dropout=0, swin=False, num_heads=0,
+                 window_size=None):
         super().__init__()
         # concatenation
         # Reshaping
@@ -589,19 +727,55 @@ class Up_Smooth_3D(nn.Module):
         # Residual connection :
         #   Conv + Norm + Act
         #   Conv + Norm + Act
+        self.swin = swin
         C, H, W, Z = in_shape
         self.reshape = ReshapeLayer3D()
         self.in_conv = wrapper_spectral_norm(
             nn.Conv3d(out_channels // 2, out_channels, kernel_size=1, padding=0, bias=bias),
             (C // 8, H * 2, W * 2, Z * 2), 1, c=cout)
-        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(C // 4, H * 2, W * 2, Z * 2), activation=activation,
+        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(C // 4, H * 2, W * 2, Z * 2),
+                                          activation=activation,
                                           bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
-                                          c=c)
+                                          c=c, dropout=dropout)
+        if swin:
+            self.swin_layer = SwinL2AttentionBasicLayer(
+                dim=C // 2,
+                depth=2,
+                num_heads=num_heads,
+                window_size=window_size,
+                drop_path=[0, 0],
+            )
 
     def forward(self, x1, x2):
+        if self.swin:
+            x2 = self.swin_layer(x2)
         x = torch.cat([x2, x1], dim=1)
         x = self.reshape(x)
         x = self.in_conv(x)
+        return self.residual_blocks(x)
+
+
+class Up_Layer_3D(nn.Module):
+    def __init__(self, in_channels, out_channels, norm_layer, in_shape, activation, block_type=bottleneck_block_3D,
+                 bottleneck_reduction=2, repetition=2, bias=True, c=None, dropout=0):
+        super().__init__()
+        # Reshaping
+        # 1x1 invertible conv
+        # Residual connection :
+        #   Conv + Norm + Act
+        #   Conv + Norm + Act
+
+        C, H, W, Z = in_shape
+        self.in_conv = nn.ConvTranspose3d(in_channels // 2, in_channels // 4, kernel_size=2, stride=2, bias=bias)
+
+        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H * 2, W * 2, Z * 2),
+                                          activation=activation,
+                                          bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
+                                          c=c, dropout=dropout)
+
+    def forward(self, x):
+        x = self.in_conv(x)
+
         return self.residual_blocks(x)
 
 
@@ -622,6 +796,7 @@ class Up_Smooth_Bottom_2D(nn.Module):
         self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H, W), activation=activation,
                                           bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
                                           c=c)
+
     def forward(self, x):
         x = self.reshape(x)
         x = self.in_conv(x)
@@ -631,45 +806,78 @@ class Up_Smooth_Bottom_2D(nn.Module):
 class Up_Smooth_Bottom_3D(nn.Module):
 
     def __init__(self, in_channels, out_channels, norm_layer, in_shape, activation, block_type=bottleneck_block_3D,
-                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1):
+                 bottleneck_reduction=2, repetition=2, bias=True, c=1, cout=1, dropout=0, swin=False, num_heads=None,
+                 window_size=None):
         super().__init__()
         # Reshaping
         # 1x1 invertible conv
         # Residual connection :
         #   Conv + Norm + Act
         #   Conv + Norm + Act
+        self.swin = swin
         C, H, W, Z = in_shape
         self.reshape = ReshapeLayer3D()
         self.in_conv = wrapper_spectral_norm(
             nn.Conv3d(out_channels // 4, out_channels, kernel_size=1, padding=0, bias=bias),
             (C // 8, H * 2, W * 2, Z * 2), 1, c=cout)
-        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H * 2, W * 2, Z * 2), activation=activation,
+        self.residual_blocks = block_type(norm_layer=norm_layer, in_shape=(out_channels, H * 2, W * 2, Z * 2),
+                                          activation=activation,
                                           bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
-                                          c=c)
+                                          c=c, dropout=dropout)
+
+        if swin:
+            self.swin_layer = SwinL2AttentionBasicLayer(
+                dim=C,
+                depth=2,
+                num_heads=num_heads,
+                window_size=window_size,
+                drop_path=[0, 0],
+            )
 
     def forward(self, x):
+        if self.swin:
+            x = self.swin_layer(x)
         x = self.reshape(x)
         x = self.in_conv(x)
         return self.residual_blocks(x)
 
 
+class SpectralSwinUNETR(nets.SwinUNETR):
+    def __init__(self, img_size, in_channels, out_channels, c=1, **kwargs):
+        super().__init__(img_size, in_channels, out_channels, **kwargs)
+        self.c = c
+        for name, module in self.named_modules():
+            if isinstance(module, nn.Conv3d):
+                ks = module.kernel_size
+                setattr(self, name, wrapper_spectral_norm(module, kernel_size=ks[0], c=self.c))
+            elif isinstance(module, nn.ModuleList) and all(isinstance(sub_module, nn.Linear) for sub_module in module):
+                # Replace MLP with classical spectral norm
+                new_module = nn.Sequential()
+                for sub_name, sub_module in module.named_children():
+                    sub_module_spectral_norm = nn.utils.spectral_norm(sub_module)
+                    new_module.add_module(sub_name, sub_module_spectral_norm)
+                setattr(model, name, new_module)
+
+    def clamp_norm_layers(self):
+        pass
+
+
 def wrapper_spectral_norm(layer, shapes, kernel_size, c=1):
     if c is None:
         return layer
-    
-    return spectral_norm_fc(layer, c,
-                            n_power_iterations=1)
-
-    """
-    if kernel_size == 1:
-        # use spectral norm fc, because bound are tight for 1x convolutions
+    if c > 0:
         return spectral_norm_fc(layer, c,
                                 n_power_iterations=1)
-    else:
-        # use spectral norm based on conv, because bound not tight
-        return spectral_norm_conv(layer, c, shapes,
-                                  n_power_iterations=1)
-    """
+
+    if c < 0:
+        if kernel_size == 1:
+            # use spectral norm fc, because bound are tight for 1x convolutions
+            return spectral_norm_fc(layer, -c,
+                                    n_power_iterations=1)
+        else:
+            # use spectral norm based on conv, because bound not tight
+            return spectral_norm_conv(layer, -c, shapes,
+                                      n_power_iterations=1)
 
 
 def init_weights(m):
@@ -709,9 +917,18 @@ if __name__ == '__main__':
     value_out = model.inc[1].log_scale()
     print(value_out)
     """
+    """
     in_shape = (1, 64, 32)
     x = torch.rand((1, 1, 64, 32))
     model = PytorchUNet2D(in_shape=in_shape, c=None, norm_layer = nn.BatchNorm2d)
     model.eval()
     y = model(x)
+    print(y.shape)
+    """
+
+    in_shape = (1, 64, 64, 64)
+    x = torch.rand((1, 1, 64, 64, 64))
+    model = PytorchUNet3D(in_shape=in_shape, c=None, norm_layer=ActNormLP3D, ssl=True)
+    model.eval()
+    y = model.forward_ssl(x)
     print(y.shape)

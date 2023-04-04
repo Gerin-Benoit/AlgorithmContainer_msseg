@@ -84,11 +84,12 @@ class Baseline(SegmentationAlgorithm):
         for i in range(3):
             unet = PytorchUNet3D(in_shape,
                                  c=None,
-                                 norm_layer=ActNormLP3D,
+                                 norm_layer=nn.InstanceNorm3d,
                                  num_classes=2,
                                  n_channels=1,
                                  device=self.device,
-                                 cout=None).to(self.device)
+                                 cout=None,
+                                ).to(self.device)
             x = torch.rand((1, 1,) + roi_size).to(self.device)
             y = unet(x)
             unets.append(unet)
