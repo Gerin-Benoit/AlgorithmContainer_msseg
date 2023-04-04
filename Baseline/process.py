@@ -103,7 +103,7 @@ class Baseline(SegmentationAlgorithm):
             super_model.eval()
             super_models.append(super_model)
 
-        super_model = EnsembleUnet(Unets=super_models, path_stats='./stats.json')
+        super_model = EnsembleUnet(Unets=super_models, path_stats=None)
 
 
         self.super_model = super_model
