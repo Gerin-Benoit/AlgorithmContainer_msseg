@@ -89,6 +89,7 @@ class Baseline(SegmentationAlgorithm):
                                  n_channels=1,
                                  device=self.device,
                                  cout=None,
+
                                 ).to(self.device)
             x = torch.rand((1, 1,) + roi_size).to(self.device)
             y = unet(x)
@@ -98,7 +99,7 @@ class Baseline(SegmentationAlgorithm):
         for i, unet in enumerate(unets):
             super_model = DensityUnet(path_gmms=f'./gmm{i+1}.pth', path_density_unet=f'./model{i+1}.pth',
                                       unet=unets[i], device=self.device,
-                                      combination='last', K=2, level=5).to(self.device)
+                                      combination='last', K=4, level=5).to(self.device)
             super_model.Unet_init = True
             super_model.eval()
             super_models.append(super_model)
@@ -112,9 +113,10 @@ class Baseline(SegmentationAlgorithm):
         self.sw_batch_size = 6
         self.overlap = 0.5
 
-        self.method = 'logprob_mean_vote'
-        self.alpha = 0
+        self.method = 'logprob_mean_vote_std'
+        self.alpha = 1
         self.th = 0.7
+        self.temperature = 15
 
 
     def process_case(self, *, idx, case):
@@ -198,7 +200,7 @@ class Baseline(SegmentationAlgorithm):
                 conf_map = torch.squeeze(val_confidences.cpu())
                 ens_outputs.append(torch.tensor(val_outputs))
                 ens_confidences.append(conf_map)
-            conf_map, val_outputs = self.super_model.combine_confidences(ens_confidences, ens_outputs, self.th, self.method, self.alpha)
+            conf_map, val_outputs = self.super_model.combine_confidences(ens_confidences, ens_outputs, th=self.th, combination=self.method, alpha=self.alpha, temperature=self.temperature)
 
             #val_outputs = remove_connected_components(val_outputs.reshape(H, W, Z))
             conf_map = conf_map.reshape(H, W, Z)

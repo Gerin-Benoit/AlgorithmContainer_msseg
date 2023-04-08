@@ -43,8 +43,8 @@ __all__ = [
 
 def wrapper_spectral_norm(layer, c=1):
     if c is None:
+        print("no attention")
         return layer
-
     return spectral_norm_fc(layer, c, n_power_iterations=1)
 
 
@@ -64,6 +64,7 @@ class MLPBlock(nn.Module):
             dropout_rate: float = 0.0,
             act: Union[Tuple, str] = "GELU",
             dropout_mode="vit",
+            c=1.0
     ) -> None:
         """
         Args:
@@ -85,8 +86,8 @@ class MLPBlock(nn.Module):
         if not (0 <= dropout_rate <= 1):
             raise ValueError("dropout_rate should be between 0 and 1.")
         mlp_dim = mlp_dim or hidden_size
-        self.linear1 = wrapper_spectral_norm(nn.Linear(hidden_size, mlp_dim))
-        self.linear2 = wrapper_spectral_norm(nn.Linear(mlp_dim, hidden_size))
+        self.linear1 = wrapper_spectral_norm(nn.Linear(hidden_size, mlp_dim), c=c)
+        self.linear2 = wrapper_spectral_norm(nn.Linear(mlp_dim, hidden_size), c=c)
         self.fn = get_act_layer(act)
         self.drop1 = nn.Dropout(dropout_rate)
         dropout_opt = look_up_option(dropout_mode, SUPPORTED_DROPOUT_MODE)
@@ -213,6 +214,7 @@ class WindowL2Attention(nn.Module):
             qkv_bias: bool = False,
             attn_drop: float = 0.0,
             proj_drop: float = 0.0,
+            c: float = 1.0
     ) -> None:
         """
         Args:
@@ -274,9 +276,9 @@ class WindowL2Attention(nn.Module):
 
         relative_position_index = relative_coords.sum(-1)
         self.register_buffer("relative_position_index", relative_position_index)
-        self.qkv = wrapper_spectral_norm(nn.Linear(dim, dim * 2, bias=qkv_bias))
+        self.qkv = wrapper_spectral_norm(nn.Linear(dim, dim * 2, bias=qkv_bias), c=c)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = wrapper_spectral_norm(nn.Linear(dim, dim))
+        self.proj = wrapper_spectral_norm(nn.Linear(dim, dim), c=c)
         self.proj_drop = nn.Dropout(proj_drop)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
         self.softmax = nn.Softmax(dim=-1)
@@ -330,6 +332,7 @@ class SwinTransformerBlock(nn.Module):
             act_layer: str = "GELU",
             norm_layer: Type[LayerNorm] = nn.LayerNorm,
             use_checkpoint: bool = False,
+            c=1.0
     ) -> None:
         """
         Args:
@@ -362,6 +365,7 @@ class SwinTransformerBlock(nn.Module):
             qkv_bias=qkv_bias,
             attn_drop=attn_drop,
             proj_drop=drop,
+            c=c
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -615,6 +619,7 @@ class SwinL2AttentionBasicLayer(nn.Module):
             norm_layer: Type[LayerNorm] = nn.LayerNorm,
             downsample: Optional[nn.Module] = None,
             use_checkpoint: bool = False,
+            c: float = 1.0
     ) -> None:
         """
         Args:
@@ -652,6 +657,7 @@ class SwinL2AttentionBasicLayer(nn.Module):
                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                     norm_layer=norm_layer,
                     use_checkpoint=use_checkpoint,
+                    c=c
                 )
                 for i in range(depth)
             ]

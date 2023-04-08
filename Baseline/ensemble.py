@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 from voxel_uncertainty import voxel_uncertainty, weighted_expectation_of_entropy, expectation_of_entropy, \
     entropy_of_expected
 import numpy as np
@@ -108,15 +109,27 @@ class EnsembleUnet:
 
         return mode
 
-    def logprob_mean_vote(self, probs, confs, th):
-        weights = confs / torch.sum(confs, dim=0, keepdim=True)
+    def logprob_mean_vote(self, probs, confs, th, temperature):
 
+        # weights = confs / torch.sum(confs, dim=0, keepdim=True)
+        # print(confs[:,0,0,0])
+        weights = F.softmax(confs / temperature, dim=0)
+        print(weights[:, 50, 50, 50])
         # Compute the weighted mean predictions
         mean_probs = torch.sum(weights * probs, dim=0)
 
         # Apply the threshold
 
         return mean_probs
+
+    def weighted_std(self, probs, weighted_mean, confs, temperature):
+        weights = F.softmax(confs / temperature, dim=0)
+        # weights = confs / torch.sum(confs, dim=0, keepdim=True)
+        squared_sum = torch.sum(weights ** 2, dim=0)
+        var = torch.sum(weights * (probs - weighted_mean) ** 2, dim=0) * 1 / (1 - squared_sum)
+        std = torch.sqrt(var)
+        # print(std)
+        return std
 
     '''
         def majority_vote(self, probs, th):
@@ -146,7 +159,7 @@ class EnsembleUnet:
     '''
 
     def combine_confidences(self, confidences, outputs, th, combination, alpha=2, unc_measure='EOE',
-                            weight_unconfident=0.5):
+                            weight_unconfident=0.5, temperature=1.0):
 
         confidences_filtered = []
         final_confidences = torch.zeros_like(confidences[0])
@@ -345,14 +358,154 @@ class EnsembleUnet:
 
             probs = torch.stack(outputs)
 
-            predictions = self.logprob_mean_vote(probs, confidences, th)
+            predictions = self.logprob_mean_vote(probs, confidences, th, temperature)
             predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
-            #unc = -voxel_uncertainty(probs=probs, measure=unc_measure)  # .numpy()
-            unc = torch.abs(predictions-th)
+            # unc = -voxel_uncertainty(probs=probs, measure=unc_measure)#.numpy()
+
+            unc = torch.abs(predictions - th)
             # unc = torch.amax(confidences, dim=0)
 
             # unc = -weighted_expectation_of_entropy(probs, confidences, epsilon=1e-10)
             return unc.numpy(), predictions_th.numpy()
+
+        elif combination == 'logprob_mean_vote_improved':
+
+            # outputs = [M, H, W, Z], confidences = [M, H, W, Z]
+            confidences = torch.stack(confidences)
+            # no_confidences = torch.ones(confidences.shape) #
+            # confidences = confidences - torch.min(confidences) + 1e-8  # only positive confidences (slight margin to avoid 0 in weighted mean)
+
+            probs = torch.stack(outputs)
+
+            # predictions = self.logprob_mean_vote(probs, no_confidences, th)
+            predictions = self.logprob_mean_vote(probs, confidences, th, temperature)
+            # print(predictions-log_predictions)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            # unc = -voxel_uncertainty(probs=probs, measure=unc_measure)#.numpy()
+
+            # weighted_std = self.weighted_std(probs, predictions, confidences)
+            # conf = torch.abs(predictions-th)/(1+weighted_std)
+
+            # t = th*(predictions_th == 1) + (1-th)*(predictions_th==0)
+            conf = torch.abs(predictions - th)  # /(1+self.weighted_std)
+
+            # weighted_std = torch.where(conf<=0.1, weighted_std, torch.tensor(0))
+            # conf = conf/(1+weighted_std)
+            # conf = - torch.abs(predictions_th - predictions)#/t
+            # conf = conf - alpha * weighted_std * (predictions_th==1)
+            # unc = torch.amax(confidences, dim=0)
+
+            # unc = -weighted_expectation_of_entropy(probs, confidences, epsilon=1e-10)
+            return conf.numpy(), predictions_th.numpy()
+
+        elif combination == 'logprob_mean_vote_std':
+
+            confidences = torch.stack(confidences)
+            probs = torch.stack(outputs)
+            predictions = self.logprob_mean_vote(probs, confidences, th, temperature)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            weighted_std = self.weighted_std(probs, predictions, confidences, temperature)
+            conf = torch.abs(predictions - th) / (1 + alpha * weighted_std)
+
+            return conf.numpy(), predictions_th.numpy()
+
+        elif combination == 'logprob_mean_vote_std_density':
+
+            confidences = torch.stack(confidences)
+            probs = torch.stack(outputs)
+            predictions = self.logprob_mean_vote(probs, confidences, th, temperature)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            weighted_std = self.weighted_std(probs, predictions, confidences, temperature)
+            conf = torch.abs(predictions - th) / (1 + alpha * weighted_std)
+
+            conf = conf / torch.max(conf)  # conf between 0 and 1
+            conf_shape = conf.shape
+            conf = conf.flatten()
+
+            mean_confidences = torch.mean(confidences, dim=0)
+            shape = mean_confidences.shape
+            mean_confidences = mean_confidences.flatten()
+            indices = torch.arange(mean_confidences.shape)
+            indices_0 = indices[predictions_th.flatten() == 0]
+            indices_1 = indices[predictions_th.flatten() == 1]
+
+            _, indices_conf = torch.sort(conf, descending=True)
+
+            # First indice 0
+            max_mean_0 = torch.max(mean_confidences[indices_0])
+            min_mean_0 = torch.min(mean_confidences[indices_0])
+            mean_confidences_0 = mean_confidences[indices_0] - min_mean_0 + 1e-8
+            conf_0 = conf[indices_0]
+            indices_conf_0 = indices_conf[indices_0]
+            new_conf_0 = conf_0 * mean_confidences_0
+            _, new_indices_conf_0 = torch.sort(new_values_conf_0, descending=True)
+
+            # Second indice 1
+            max_mean_1 = torch.max(mean_confidences[indices_1])
+            min_mean_1 = torch.min(mean_confidences[indices_1])
+            mean_confidences_1 = mean_confidences[indices_1] - min_mean_1 + 1e-8
+
+            return conf.numpy(), predictions_th.numpy()
+
+        elif combination == 'logprob_mean_vote_th':
+
+            # outputs = [M, H, W, Z], confidences = [M, H, W, Z]
+            confidences = torch.stack(confidences)
+            # no_confidences = torch.ones(confidences.shape) #
+            # confidences = confidences - torch.min(confidences) + 1e-8  # only positive confidences (slight margin to avoid 0 in weighted mean)
+
+            probs = torch.stack(outputs)
+
+            # predictions = self.logprob_mean_vote(probs, no_confidences, th)
+            predictions = self.logprob_mean_vote(probs, confidences, th, temperature)
+            # print(predictions-log_predictions)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            # unc = -voxel_uncertainty(probs=probs, measure=unc_measure)#.numpy()
+
+            weighted_std = self.weighted_std(probs, predictions, confidences, temperature)
+            # conf = torch.abs(predictions-th)/(1+weighted_std)
+
+            t = th * (predictions_th == 1) + (1 - th) * (predictions_th == 0)
+            conf = torch.abs(predictions - th) / t
+
+            # weighted_std = torch.where(conf<=0.1, weighted_std, torch.tensor(0))
+            # conf = conf/(1+weighted_std)
+            # conf = - torch.abs(predictions_th - predictions)#/t
+            # conf = conf - alpha * weighted_std * (predictions_th==1)
+            # unc = torch.amax(confidences, dim=0)
+
+            # unc = -weighted_expectation_of_entropy(probs, confidences, epsilon=1e-10)
+            return conf.numpy(), predictions_th.numpy()
+
+        elif combination == 'simple_mean_vote':
+
+            # outputs = [M, H, W, Z], confidences = [M, H, W, Z]
+            confidences = torch.stack(confidences)
+            # no_confidences = torch.ones(confidences.shape) #
+            # confidences = confidences - torch.min(confidences) + 1e-8  # only positive confidences (slight margin to avoid 0 in weighted mean)
+
+            probs = torch.stack(outputs)
+
+            # predictions = self.logprob_mean_vote(probs, no_confidences, th)
+            predictions = self.logprob_mean_vote(probs, confidences, th)
+            # print(predictions-log_predictions)
+            predictions_th = torch.where(predictions >= th, torch.tensor(1.0), torch.tensor(0.0))
+            # unc = -voxel_uncertainty(probs=probs, measure=unc_measure)#.numpy()
+
+            # weighted_std = self.weighted_std(probs, predictions, confidences)
+            # conf = torch.abs(predictions-th)/(1+weighted_std)
+
+            # t = th*(predictions_th == 1) + (1-th)*(predictions_th==0)
+            conf = torch.abs(predictions - th)  # /(1+self.weighted_std)
+
+            # weighted_std = torch.where(conf<=0.1, weighted_std, torch.tensor(0))
+            # conf = conf/(1+weighted_std)
+            # conf = - torch.abs(predictions_th - predictions)#/t
+            # conf = conf - alpha * weighted_std * (predictions_th==1)
+            # unc = torch.amax(confidences, dim=0)
+
+            # unc = -weighted_expectation_of_entropy(probs, confidences, epsilon=1e-10)
+            return conf.numpy(), predictions_th.numpy()
 
         elif combination == 'majority_vote_combined_confidents':
             for i in range(len(self.Unets)):

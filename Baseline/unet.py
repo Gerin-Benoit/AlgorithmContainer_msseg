@@ -62,9 +62,14 @@ class ActNormLP3D(nn.Module):
         return self._shift[None, :, None, None, None]
 
     def forward(self, x):
+        to_transpose = False
+        if not x.size(1) == self.num_channels:
+            x = x.transpose(1, -1)
+            to_transpose = True
         if not self._init:
             with torch.no_grad():
                 # initialize params to input stats
+                # print(x.size(),self.num_channels)
                 assert self.num_channels == x.size(1)
                 mean = torch.transpose(x, 0, 1).contiguous().view(self.num_channels, -1).mean(dim=1, keepdim=False)
                 zero_mean = x - mean[None, :, None, None, None]
@@ -76,7 +81,10 @@ class ActNormLP3D(nn.Module):
                 self._init = True
 
         log_scale = self.log_scale()
-        return x * torch.exp(log_scale) + self.shift()
+        out = x * torch.exp(log_scale) + self.shift()
+        if to_transpose:
+            out = out.transpose(1, -1)
+        return out
 
 
 class basic_block_2D(nn.Module):
@@ -398,7 +406,10 @@ class PytorchUNet3D(nn.Module):
                  ssl=False,
                  dropout=0.0,
                  dropout_style=None,
-                 swin=False
+                 swin=False,
+                 compact=False,
+                 tiny_head=False,
+                 small_head=False
                  ):
         super(PytorchUNet3D, self).__init__()
         """Unet"""
@@ -406,9 +417,10 @@ class PytorchUNet3D(nn.Module):
         self.num_classes = num_classes
         self.n_channels = n_channels
         self.device = device
-        self.channels_list = [12, 24, 48, 96, 192] if swin else [20, 40, 80, 160, 320]
-        self.num_heads = [3, 3, 4, 4, 6]
-        self.window_size = ensure_tuple_rep(7, 3)
+        depth = 3 if swin else 3 if compact else 4
+        self.channels_list = [20, 40, 80, 160] if swin else [10, 20, 40, 80] if compact else [20, 40, 80, 160, 320]
+        self.num_heads = [5, 5, 5, 5] if swin else [0, 0, 0, 0, 0]  # for conciness of code
+        self.window_size = ensure_tuple_rep(5, 3)
         self.dropout = dropout
         self.dropout_style = dropout_style
 
@@ -472,9 +484,30 @@ class PytorchUNet3D(nn.Module):
                                                 activation=activation, block_type=block_type,
                                                 bottleneck_reduction=bottleneck_reduction, repetition=repetition,
                                                 c=None, dropout=self.dropout))
+            if tiny_head:
+                head = nn.Sequential(
+                    *[nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
+                self.outc = head
+            elif small_head:
+                head = nn.Sequential(
+                    *[nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=5, padding=2),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
+                self.outc = head
+                print("SMALL HEAD")
 
-            self.outc = OutConv_Smooth_3D(self.channels_list[0], n_channels, in_shape=(self.channels_list[0], H, W, Z),
-                                          c=None)  # prediction for each voxel
+            else:
+                self.outc = OutConv_Smooth_3D(self.channels_list[0], n_channels,
+                                              in_shape=(self.channels_list[0], H, W, Z),
+                                              c=None)  # prediction for each voxel
+
 
 
         else:
@@ -498,8 +531,29 @@ class PytorchUNet3D(nn.Module):
                                                  cout=cout, dropout=self.dropout, swin=swin,
                                                  num_heads=self.num_heads[i], window_size=self.window_size))
 
-            self.outc = OutConv_Smooth_3D(self.channels_list[0], num_classes, in_shape=(self.channels_list[0], H, W, Z),
-                                          c=None)  # prediction for each voxel
+            if tiny_head:
+                head = nn.Sequential(
+                    *[nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
+                self.outc = head
+            elif small_head:
+                head = nn.Sequential(
+                    *[nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=5, padding=2),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], self.channels_list[0], kernel_size=3, padding=1),
+                      nn.InstanceNorm3d(self.channels_list[0]),
+                      nn.ELU(),
+                      nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
+                self.outc = head
+                print("SMALL HEAD")
+
+            else:
+                self.outc = OutConv_Smooth_3D(self.channels_list[0], 2,
+                                              in_shape=(self.channels_list[0], H, W, Z),
+                                              c=None)  # prediction for each voxel
         """Spectral Normalization"""
         self.smoothness = torch.tensor(c).to(self.device) if c is not None else None
 
@@ -737,13 +791,18 @@ class Up_Smooth_3D(nn.Module):
                                           activation=activation,
                                           bottleneck_reduction=bottleneck_reduction, repetition=repetition, bias=bias,
                                           c=c, dropout=dropout)
+
         if swin:
             self.swin_layer = SwinL2AttentionBasicLayer(
                 dim=C // 2,
-                depth=2,
+                depth=3,
                 num_heads=num_heads,
                 window_size=window_size,
-                drop_path=[0, 0],
+                drop_path=[0, 0, 0],
+                norm_layer=norm_layer,
+                drop=0.0,
+                attn_drop=0.0,
+                c=1
             )
 
     def forward(self, x1, x2):
@@ -828,10 +887,14 @@ class Up_Smooth_Bottom_3D(nn.Module):
         if swin:
             self.swin_layer = SwinL2AttentionBasicLayer(
                 dim=C,
-                depth=2,
+                depth=3,
                 num_heads=num_heads,
                 window_size=window_size,
-                drop_path=[0, 0],
+                drop_path=[0, 0, 0],
+                norm_layer=norm_layer,
+                drop=0.0,
+                attn_drop=0.0,
+                c=1
             )
 
     def forward(self, x):
