@@ -81,7 +81,7 @@ class Baseline(SegmentationAlgorithm):
         in_shape = (in_channels,) + roi_size
 
         unets = []
-        for i in range(3):
+        for i in range(10):
             unet = PytorchUNet3D(in_shape,
                                  c=None,
                                  norm_layer=nn.InstanceNorm3d,
@@ -89,7 +89,7 @@ class Baseline(SegmentationAlgorithm):
                                  n_channels=1,
                                  device=self.device,
                                  cout=None,
-
+                                 compact=True
                                 ).to(self.device)
             x = torch.rand((1, 1,) + roi_size).to(self.device)
             with torch.no_grad():
@@ -100,7 +100,7 @@ class Baseline(SegmentationAlgorithm):
         for i, unet in enumerate(unets):
             super_model = DensityUnet(path_gmms=f'./gmm{i+1}.pth', path_density_unet=f'./model{i+1}.pth',
                                       unet=unets[i], device=self.device,
-                                      combination='last', K=4, level=5).to(self.device)
+                                      combination='last', K=4, level=5, compact=True).to(self.device)
             super_model.Unet_init = True
             super_model.eval()
             super_models.append(super_model)
