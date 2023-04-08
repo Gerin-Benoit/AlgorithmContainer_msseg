@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 
 class DensityUnet(nn.Module):
-    def __init__(self, path_density_unet, path_gmms, unet, combination='last', K=4, device=cuda, level=None, swin=False,
+    def __init__(self, path_density_unet, path_gmms, unet, device,combination='last', K=4, level=None, swin=False,
                  compact=False):
         super(DensityUnet, self).__init__()
         self.Unet = unet
