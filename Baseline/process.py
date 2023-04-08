@@ -92,7 +92,8 @@ class Baseline(SegmentationAlgorithm):
 
                                 ).to(self.device)
             x = torch.rand((1, 1,) + roi_size).to(self.device)
-            y = unet(x)
+            with torch.no_grad():
+                y = unet(x)
             unets.append(unet)
 
         super_models = []
