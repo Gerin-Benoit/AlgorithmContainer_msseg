@@ -115,9 +115,9 @@ class Baseline(SegmentationAlgorithm):
         self.overlap = 0.5
 
         self.method = 'logprob_mean_vote_std'
-        self.alpha = 1
+        self.alpha = 0.1
         self.th = 0.7
-        self.temperature = 50
+        self.temperature = 100
 
 
     def process_case(self, *, idx, case):
