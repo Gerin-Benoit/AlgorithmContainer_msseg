@@ -501,7 +501,7 @@ class PytorchUNet3D(nn.Module):
                       nn.ELU(),
                       nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
                 self.outc = head
-                print("SMALL HEAD")
+                #print("SMALL HEAD")
 
             else:
                 self.outc = OutConv_Smooth_3D(self.channels_list[0], n_channels,
@@ -548,7 +548,7 @@ class PytorchUNet3D(nn.Module):
                       nn.ELU(),
                       nn.Conv3d(self.channels_list[0], 2, kernel_size=1)])
                 self.outc = head
-                print("SMALL HEAD")
+                #print("SMALL HEAD")
 
             else:
                 self.outc = OutConv_Smooth_3D(self.channels_list[0], 2,
